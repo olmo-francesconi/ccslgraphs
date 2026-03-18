@@ -1,0 +1,16 @@
+[project]
+name = "claude-statusline"
+version = "0.1.0"
+description = "Claude Code statusline with block-based layout and usage graphs"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+statusline = "statusline:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools]
+py-modules = ["statusline", "usage_fetch"]
