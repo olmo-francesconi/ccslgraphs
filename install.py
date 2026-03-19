@@ -7,6 +7,7 @@ import json
 import os
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
@@ -112,13 +113,14 @@ def _validate_install_dir(p: Path) -> str | None:
 
 def prompt_install_dir() -> Path:
     _step_header(1, 3, "Install location")
-    default = Path.home() / ".claude" / "ccslgraphs"
+    default = Path.home() / ".claude"
     while True:
-        result = _raw_input(f"  Install directory [{default}]: ")
+        result = _raw_input(f"  Parent directory [{default}]: ")
         if result is None:
             sys.exit("Installation cancelled.")
         raw = result.strip()
-        p = Path(raw).expanduser().resolve() if raw else default
+        parent = Path(raw).expanduser().resolve() if raw else default
+        p = parent / "ccslgraphs"
         err = _validate_install_dir(p)
         if err is None:
             return p
@@ -379,7 +381,9 @@ def prompt_confirm(install_dir: Path, use_bar: bool) -> None:
     snippet = json.dumps({"statusLine": entry}, indent=2)
 
     source = "local" if _local_root() is not None else "remote"
-    print(f"  Install into:  {install_dir}")
+    dir_ok = _validate_install_dir(install_dir) is None
+    dir_mark = f"{_OK}✓{_R}" if dir_ok else f"{_WN}⚠{_R}"
+    print(f"  Install into:  {dir_mark} {install_dir}")
     print(f"  Source:        {source}")
     print(f"  Graph style:   {style_name}")
     print(f"\n  settings.json preview:")
@@ -453,7 +457,7 @@ def bake_graph_type(install_dir: Path, bar: bool) -> None:
 def statusline_entry(install_dir: Path) -> dict:
     return {
         "type": "command",
-        "command": f"python3 {install_dir}/statusline.py",
+        "command": f"python3 {shlex.quote(str(install_dir))}/statusline.py",
         "padding": 0,
     }
 

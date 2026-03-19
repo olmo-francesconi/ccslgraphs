@@ -7,6 +7,7 @@ Removes the install directory and cleans up settings.json.
 
 import json
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -17,8 +18,11 @@ SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 def detect_install_dir(settings: dict) -> Path | None:
     """Extract and resolve the install dir from the statusLine command in settings."""
     cmd = settings.get("statusLine", {}).get("command", "")
-    parts = cmd.split()
-    if len(parts) == 2 and parts[1].endswith("/statusline.py"):
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return None
+    if len(parts) == 2 and parts[1].endswith("ccslgraphs/statusline.py"):
         return Path(parts[1]).parent.expanduser()
     return None
 
@@ -26,7 +30,7 @@ def detect_install_dir(settings: dict) -> Path | None:
 def statusline_entry(install_dir: Path) -> dict:
     return {
         "type": "command",
-        "command": f"python3 {install_dir}/statusline.py",
+        "command": f"python3 {shlex.quote(str(install_dir))}/statusline.py",
         "padding": 0,
     }
 
