@@ -163,7 +163,7 @@ class PctToRowTests(unittest.TestCase):
     ROWS = statusline.GRAPH_ROWS  # 7
 
     def _dot_row(self, pct: float) -> int:
-        plain_rows, _ = statusline._render_graph([pct], current_pct=round(pct))
+        plain_rows, _ = statusline._render_line_graph([pct], current_pct=round(pct))
         for i, row in enumerate(plain_rows):
             if "●" in row:
                 return i

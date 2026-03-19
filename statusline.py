@@ -21,8 +21,42 @@ BAR_WIDTH = 20
 MAX_WIDTH = 128
 COMPACT_GRAPH_W = 80
 
-_GRID_CHAR = "─"
+_GRID_CHAR = "╌"
 _GRID_ROWS_SET = {0, 3, 6}
+BLOCKS = " ▁▂▃▄▅▆▇█"  # index 0=space, 1–8 = U+2581–U+2588
+
+# [GRADIENT_RGB]
+# Baked at install from actual terminal palette via OSC 4 (pct, r, g, b).
+_GRADIENT_RGB: list[tuple[int, int, int, int]] | None = None
+# [/GRADIENT_RGB]
+
+# Fallback RGB stops used when _GRADIENT_RGB is not baked.
+_GRADIENT_FALLBACK: list[tuple[int, int, int, int]] = [
+    (0,   95, 135, 255),  # blue   ≈ C.bar_ok
+    (70, 255, 175,   0),  # orange ≈ C.bar_warn
+    (90, 255,   0,   0),  # red    ≈ C.bar_crit
+]
+
+
+def _pct_color(pct: float) -> str:
+    """Smooth truecolor gradient: bar_ok (0%) → bar_warn (70%) → bar_crit (90%+)."""
+    stops = _GRADIENT_RGB or _GRADIENT_FALLBACK
+    if pct <= stops[0][0]:
+        _, r, g, b = stops[0]
+        return f"\x1b[38;2;{r};{g};{b}m"
+    if pct >= stops[-1][0]:
+        _, r, g, b = stops[-1]
+        return f"\x1b[38;2;{r};{g};{b}m"
+    for i in range(len(stops) - 1):
+        p0, r0, g0, b0 = stops[i]
+        p1, r1, g1, b1 = stops[i + 1]
+        if p0 <= pct <= p1:
+            t = (pct - p0) / (p1 - p0)
+            return f"\x1b[38;2;{round(r0+t*(r1-r0))};{round(g0+t*(g1-g0))};{round(b0+t*(b1-b0))}m"
+    _, r, g, b = stops[-1]
+    return f"\x1b[38;2;{r};{g};{b}m"
+
+
 CACHE_PATH = Path(__file__).parent / "usage-cache.json"
 FETCH_LOCK_PATH = Path(__file__).parent / "usage-fetch.lock"
 
@@ -381,7 +415,7 @@ def _build_columns(
     return cols
 
 
-def _render_graph(
+def _render_line_graph(
     columns: list[float],
     current_pct: int,
     header_text: str = "",
@@ -392,8 +426,7 @@ def _render_graph(
         return round((100 - pct) * (GRAPH_ROWS - 1) / 100)
 
     row_for_col: list[float] = [float("nan") if math.isnan(pct) else float(pct_to_row(pct)) for pct in columns]
-    dot_color = C.bar_crit if current_pct >= 90 else C.bar_warn if current_pct >= 70 else C.bar_ok
-    graph_color = dot_color
+    dot_color = _pct_color(current_pct)
 
     last_data_col = -1
     for col in range(num_cols):
@@ -414,6 +447,7 @@ def _render_graph(
         if math.isnan(row_c_f):
             continue
         row_c = int(row_c_f)
+        col_color = _pct_color(columns[col] if not math.isnan(columns[col]) else 0.0)
 
         prev_raw = row_for_col[col - 1] if col > 0 else float("nan")
         next_raw = row_for_col[col + 1] if col < num_cols - 1 else float("nan")
@@ -426,26 +460,31 @@ def _render_graph(
         if col == last_data_col:
             _set_grid_cell(grid, row_c, col, "●", dot_color)
             if left_bend:
-                _set_grid_cell(grid, prev_row, col, "╮", graph_color)
+                prev_pct = columns[col - 1]
+                _set_grid_cell(grid, prev_row, col, "╮", _pct_color(prev_pct if not math.isnan(prev_pct) else 0.0))
         elif left_bend and right_bend:
-            _set_grid_cell(grid, prev_row, col, "╮", graph_color)
-            _set_grid_cell(grid, row_c, col, "─", graph_color)
-            _set_grid_cell(grid, next_row, col, "╭", graph_color)
+            prev_pct = columns[col - 1]
+            next_pct = columns[col + 1]
+            _set_grid_cell(grid, prev_row, col, "╮", _pct_color(prev_pct if not math.isnan(prev_pct) else 0.0))
+            _set_grid_cell(grid, row_c, col, "─", col_color)
+            _set_grid_cell(grid, next_row, col, "╭", _pct_color(next_pct if not math.isnan(next_pct) else 0.0))
         elif left_bend:
-            _set_grid_cell(grid, prev_row, col, "╮", graph_color)
-            _set_grid_cell(grid, row_c, col, "╰", graph_color)
+            prev_pct = columns[col - 1]
+            _set_grid_cell(grid, prev_row, col, "╮", _pct_color(prev_pct if not math.isnan(prev_pct) else 0.0))
+            _set_grid_cell(grid, row_c, col, "╰", col_color)
         elif right_bend:
-            _set_grid_cell(grid, row_c, col, "╯", graph_color)
-            _set_grid_cell(grid, next_row, col, "╭", graph_color)
+            next_pct = columns[col + 1]
+            _set_grid_cell(grid, row_c, col, "╯", col_color)
+            _set_grid_cell(grid, next_row, col, "╭", _pct_color(next_pct if not math.isnan(next_pct) else 0.0))
         else:
-            _set_grid_cell(grid, row_c, col, "─", graph_color)
+            _set_grid_cell(grid, row_c, col, "─", col_color)
 
         if left_bend:
             for r in range(prev_row + 1, row_c):
-                _set_grid_cell(grid, r, col, "│", graph_color)
+                _set_grid_cell(grid, r, col, "│", _pct_color((GRAPH_ROWS - 1 - r) * 100.0 / (GRAPH_ROWS - 1)))
         if right_bend:
             for r in range(next_row + 1, row_c):
-                _set_grid_cell(grid, r, col, "│", graph_color)
+                _set_grid_cell(grid, r, col, "│", _pct_color((GRAPH_ROWS - 1 - r) * 100.0 / (GRAPH_ROWS - 1)))
 
     if last_data_col >= 0 and not math.isnan(row_for_col[last_data_col]):
         max_lbl = num_cols - 2
@@ -458,6 +497,31 @@ def _render_graph(
             color=dot_color,
             header_end_col=header_end_col,
         )
+
+    _apply_graph_header(grid, header_text)
+    return _finalize_graph_grid(grid)
+
+
+def _render_bar_graph(
+    columns: list[float],
+    header_text: str = "",
+) -> tuple[list[str], list[str]]:
+    num_cols = len(columns)
+    grid = _init_graph_grid(num_cols)
+
+    for col, pct in enumerate(columns):
+        if math.isnan(pct):
+            continue
+        pct = max(0.0, min(100.0, pct))
+        color = _pct_color(pct)
+        total_eighths = round(pct * GRAPH_ROWS * 8 / 100)
+        full_rows = total_eighths // 8
+        partial = total_eighths % 8
+        for r in range(GRAPH_ROWS - full_rows, GRAPH_ROWS):
+            _set_grid_cell(grid, r, col, "█", color)
+        partial_row = GRAPH_ROWS - full_rows - 1
+        if partial > 0 and partial_row >= 0:
+            _set_grid_cell(grid, partial_row, col, BLOCKS[partial], color)
 
     _apply_graph_header(grid, header_text)
     return _finalize_graph_grid(grid)
@@ -559,11 +623,12 @@ def _graph_rows(
     current_pct: int,
     num_cols: int,
     header_text: str = "",
+    bar: bool = False,
 ) -> tuple[list[str], list[str]]:
     if not (isinstance(history, list) and history):
         return _empty_graph(num_cols, header_text)
     cols = _build_columns(history, window_start_ms, window_end_ms, fill_until_ms, num_cols)
-    return _render_graph(cols, current_pct, header_text)
+    return _render_bar_graph(cols, header_text) if bar else _render_line_graph(cols, current_pct, header_text)
 
 
 def _fmt_12h(ts_ms: float) -> str:
@@ -759,8 +824,8 @@ def _render_compact_graphs(cache: dict, safe_width: int, stale: bool) -> list[st
     ]
 
 
-def render_graphs(ctx: dict, safe_width: int) -> list[str]:
-    """Build graph rows: header + GRAPH_ROWS lines, side-by-side."""
+def render_graphs(ctx: dict, safe_width: int, bar: bool = False) -> list[str]:
+    """Build graph rows (line or bar style): header + GRAPH_ROWS lines, side-by-side."""
     cache = ctx.get("usage_cache") or {}
     stale = bool(ctx.get("usage_stale"))
 
@@ -768,37 +833,33 @@ def render_graphs(ctx: dict, safe_width: int) -> list[str]:
         return _render_compact_graphs(cache, safe_width, stale)
 
     nc = max(8, (safe_width - 3) // 2)
-
-    sess_pct = round((cache.get("session") or {}).get("utilization", 0))
-    week_pct = round((cache.get("weekly") or {}).get("utilization", 0))
     now_ms = datetime.now(timezone.utc).timestamp() * 1000
+
+    sess = cache.get("session") or {}
+    week = cache.get("weekly") or {}
+    sess_pct = round(sess.get("utilization", 0))
+    week_pct = round(week.get("utilization", 0))
 
     def _parse_ms(resets_at: str | None) -> float:
         if not resets_at:
             return now_ms
         return datetime.fromisoformat(resets_at.replace("Z", "+00:00")).timestamp() * 1000
 
-    sess_end_ms = _parse_ms((cache.get("session") or {}).get("resetsAt"))
+    sess_end_ms = _parse_ms(sess.get("resetsAt"))
     sess_start_ms = sess_end_ms - 5 * 3600 * 1000
-    week_end_ms = _parse_ms((cache.get("weekly") or {}).get("resetsAt"))
+    week_end_ms = _parse_ms(week.get("resetsAt"))
     week_start_ms = week_end_ms - 7 * 24 * 3600 * 1000
 
-    sess_hist = cache.get("history") or []
-    week_hist = cache.get("weeklyHistory") or []
-
-    s5 = _fmt_12h(sess_start_ms)
-    e5 = _fmt_12h(sess_end_ms)
-    s7 = _fmt_day_date(week_start_ms)
-    e7 = _fmt_day_date(week_end_ms)
     stale_suffix = " · stale" if stale else ""
-    lbl5 = f"5h usage: {s5} / {e5}{stale_suffix}"
-    lbl7 = f"7d usage: {s7} / {e7}{stale_suffix}"
+    pct_suffix = f"  {sess_pct}%" if bar else ""
+    lbl5 = f"5h usage: {_fmt_12h(sess_start_ms)} / {_fmt_12h(sess_end_ms)}{pct_suffix}{stale_suffix}"
+    pct_suffix = f"  {week_pct}%" if bar else ""
+    lbl7 = f"7d usage: {_fmt_day_date(week_start_ms)} / {_fmt_day_date(week_end_ms)}{pct_suffix}{stale_suffix}"
 
-    _, sc = _graph_rows(sess_hist, sess_start_ms, sess_end_ms, now_ms, sess_pct, nc, lbl5)
-    _, wc = _graph_rows(week_hist, week_start_ms, week_end_ms, now_ms, week_pct, nc, lbl7)
+    _, sc = _graph_rows(cache.get("history") or [], sess_start_ms, sess_end_ms, now_ms, sess_pct, nc, lbl5, bar)
+    _, wc = _graph_rows(cache.get("weeklyHistory") or [], week_start_ms, week_end_ms, now_ms, week_pct, nc, lbl7, bar)
 
     sep = " " + C.divider + "│" + RST + " "
-
     return [sc[r] + sep + wc[r] for r in range(GRAPH_ROWS)]
 
 
