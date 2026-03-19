@@ -913,7 +913,9 @@ def main() -> None:
 
     line1 = render_line(ctx, safe_width=safe)
     divider = C.border + "─" * safe + RST
+    # [GRAPH_TYPE]
     graph_lines = render_graphs(ctx, safe_width=safe)
+    # [/GRAPH_TYPE]
 
     print()
     for line in [line1, divider] + graph_lines:
