@@ -19,6 +19,7 @@ FETCH_LOCK_SECONDS = 60
 SAFE_MARGIN = 30
 BAR_WIDTH = 20
 MAX_WIDTH = 128
+COMPACT_GRAPH_W = 80
 
 _GRID_CHAR = "─"
 _GRID_ROWS_SET = {0, 3, 6}
@@ -700,11 +701,72 @@ def render_line(ctx: dict, safe_width: int) -> str:
     )
 
 
+def _render_compact_graphs(cache: dict, safe_width: int, stale: bool) -> list[str]:
+    """Two-line compact fallback: dot-fill progress bars for 5h and 7d windows."""
+    bar_w = min(12, max(4, safe_width // 6))
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000
+
+    def _parse_ms(s: str | None) -> float:
+        if not s:
+            return now_ms
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000
+
+    def _fmt_reset_in(resets_ms: float) -> str:
+        secs = max(0.0, (resets_ms - now_ms) / 1000)
+        if secs < 60:
+            return "<1m"
+        mins = int(secs // 60)
+        hours, mins = divmod(mins, 60)
+        days, hours = divmod(hours, 24)
+        if days > 0:
+            return f"{days}d{hours}h" if hours else f"{days}d"
+        if hours > 0:
+            return f"{hours}h{mins}m" if mins else f"{hours}h"
+        return f"{mins}m"
+
+    def _make_bar(pct: int, width: int) -> "Span":
+        filled = min(width, round(pct * width / 100))
+        color = C.bar_crit if pct >= 90 else C.bar_warn if pct >= 70 else C.bar_ok
+        return Span("●" * filled, color) + Span("○" * (width - filled), C.bar_bg)
+
+    sess = cache.get("session") or {}
+    week = cache.get("weekly") or {}
+    sess_pct = round(sess.get("utilization", 0))
+    week_pct = round(week.get("utilization", 0))
+    sess_end_ms = _parse_ms(sess.get("resetsAt"))
+    week_end_ms = _parse_ms(week.get("resetsAt"))
+
+    stale_span = Span(" · stale", C.label + DIM) if stale else Span("")
+
+    def _line(label: str, pct: int, reset_ms: float) -> str:
+        pct_color = C.bar_crit if pct >= 90 else C.bar_warn if pct >= 70 else C.bar_ok
+        span = (
+            Span(label, C.label)
+            + _make_bar(pct, bar_w)
+            + Span("  ", "")
+            + Span(f"{pct:3d}%", pct_color)
+            + Span(" · reset in ", C.border)
+            + Span(_fmt_reset_in(reset_ms), pct_color)
+            + stale_span
+        )
+        return span.colored
+
+    return [
+        _line("5h: ", sess_pct, sess_end_ms),
+        _line("7d: ", week_pct, week_end_ms),
+    ]
+
+
 def render_graphs(ctx: dict, safe_width: int) -> list[str]:
     """Build graph rows: header + GRAPH_ROWS lines, side-by-side."""
+    cache = ctx.get("usage_cache") or {}
+    stale = bool(ctx.get("usage_stale"))
+
+    if safe_width < COMPACT_GRAPH_W:
+        return _render_compact_graphs(cache, safe_width, stale)
+
     nc = max(8, (safe_width - 3) // 2)
 
-    cache = ctx.get("usage_cache") or {}
     sess_pct = round((cache.get("session") or {}).get("utilization", 0))
     week_pct = round((cache.get("weekly") or {}).get("utilization", 0))
     now_ms = datetime.now(timezone.utc).timestamp() * 1000
@@ -726,7 +788,7 @@ def render_graphs(ctx: dict, safe_width: int) -> list[str]:
     e5 = _fmt_12h(sess_end_ms)
     s7 = _fmt_day_date(week_start_ms)
     e7 = _fmt_day_date(week_end_ms)
-    stale_suffix = " · stale" if ctx.get("usage_stale") else ""
+    stale_suffix = " · stale" if stale else ""
     lbl5 = f"5h usage: {s5} / {e5}{stale_suffix}"
     lbl7 = f"7d usage: {s7} / {e7}{stale_suffix}"
 
