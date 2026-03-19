@@ -83,6 +83,8 @@ class C:
     bar_bg = "\x1b[38;5;238m"
     bracket = "\x1b[38;5;248m"
     divider = "\x1b[38;5;242m"
+    cached = "\x1b[38;5;6m"
+    total = "\x1b[38;5;3m"
     # [/COLORS]
 
 
@@ -701,13 +703,22 @@ def render_line(ctx: dict, safe_width: int) -> str:
         total_str = _fmt_tokens(ctx_size) if ctx_size else "?"
         in_str = _fmt_tokens(ctx.get("input_tokens") or 0)
         out_str = _fmt_tokens(ctx.get("output_tokens") or 0)
+        cached_str = _fmt_tokens(ctx.get("cache_read_tokens") or 0)
+        total_tok = (ctx.get("input_tokens") or 0) + (ctx.get("output_tokens") or 0)
+        total_str_tok = _fmt_tokens(total_tok)
         _io = (
             Span(" · ", C.border)
             + Span("↓", C.bar_ok)
             + Span(in_str, C.label)
-            + Span(" / ", C.border)
+            + Span(" ", "")
             + Span("↑", C.bar_warn)
             + Span(out_str, C.label)
+            + Span(" ", "")
+            + Span("~", C.cached)
+            + Span(cached_str, C.label)
+            + Span(" ", "")
+            + Span("Σ", C.total)
+            + Span(total_str_tok, C.label)
         )
         filled = min(BAR_WIDTH, round(used_int * BAR_WIDTH / 100))
         _stats_full = (
@@ -717,7 +728,7 @@ def render_line(ctx: dict, safe_width: int) -> str:
             + Span(f"{used_int}%", bar_color)
             + _io
         )
-        _stats_compact = Span(f"{used_int}%", bar_color) + _io
+        _stats_compact = Span(f"{used_int}%", bar_color) + Span(" · ", C.border) + Span("Σ", C.total) + Span(total_str_tok, C.label)
         bar_full = (
             Span("▰" * filled, bar_color)
             + Span("▱" * (BAR_WIDTH - filled), C.bar_bg)
@@ -901,6 +912,7 @@ def main() -> None:
         "ctx_size": ctx_w.get("context_window_size", 0),
         "input_tokens": ctx_w.get("total_input_tokens"),
         "output_tokens": ctx_w.get("total_output_tokens"),
+        "cache_read_tokens": ctx_w.get("cache_read_input_tokens"),
         "git": _git_info(cwd),
         "usage_cache": cache,
         "usage_stale": stale and cache is not None,

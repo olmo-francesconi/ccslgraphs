@@ -477,6 +477,8 @@ _COLOR_MAP: dict[str, int] = {
     "bar_bg":   8,   # bright black / dark gray
     "bracket":  7,   # white
     "divider":  8,   # bright black / dark gray
+    "cached":   6,   # cyan
+    "total":    3,   # yellow
 }
 
 
