@@ -14,7 +14,7 @@ import uninstall
 class InstallTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.mkdtemp()
-        self.install_dir = Path(self._tmpdir) / "ccsl"
+        self.install_dir = Path(self._tmpdir) / "ccslgraphs"
         self.settings_path = Path(self._tmpdir) / "settings.json"
 
     def tearDown(self) -> None:
@@ -25,7 +25,7 @@ class InstallTests(unittest.TestCase):
         d = install_dir or self.install_dir
         out = io.StringIO()
         with redirect_stdout(out):
-            install.copy_scripts(d)
+            install.install_scripts(install._local_root(), d)
             install.patch_settings(d, self.settings_path)
         return out.getvalue()
 
@@ -77,7 +77,7 @@ class InstallTests(unittest.TestCase):
 class UninstallIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.mkdtemp()
-        self.install_dir = Path(self._tmpdir) / "ccsl"
+        self.install_dir = Path(self._tmpdir) / "ccslgraphs"
         self.settings_path = Path(self._tmpdir) / "settings.json"
 
     def tearDown(self) -> None:
@@ -87,7 +87,7 @@ class UninstallIntegrationTests(unittest.TestCase):
     def _install(self, install_dir: Path | None = None) -> None:
         d = install_dir or self.install_dir
         with redirect_stdout(io.StringIO()):
-            install.copy_scripts(d)
+            install.install_scripts(install._local_root(), d)
             install.patch_settings(d, self.settings_path)
 
     def _uninstall(self) -> str:
@@ -121,7 +121,7 @@ class UninstallIntegrationTests(unittest.TestCase):
         self.assertNotIn("statusLine", settings)
 
     def test_uninstall_auto_detects_custom_dir(self) -> None:
-        custom = Path(self._tmpdir) / "custom-loc"
+        custom = Path(self._tmpdir) / "custom" / "ccslgraphs"
         self._install(custom)
 
         out = io.StringIO()
