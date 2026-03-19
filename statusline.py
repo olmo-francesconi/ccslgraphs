@@ -36,6 +36,7 @@ DIM = "\x1b[2m"
 
 
 class C:
+    # [COLORS]
     border = "\x1b[38;5;245m"
     label = "\x1b[38;5;252m"
     model = "\x1b[38;5;183m"
@@ -48,6 +49,7 @@ class C:
     bar_bg = "\x1b[38;5;238m"
     bracket = "\x1b[38;5;248m"
     divider = "\x1b[38;5;242m"
+    # [/COLORS]
 
 
 def vlen(s: str) -> int:
