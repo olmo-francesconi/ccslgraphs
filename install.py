@@ -581,11 +581,11 @@ def bake_colors(install_dir: Path) -> None:
 
 
 def _local_root() -> Path | None:
-    """Return the repo root if this script is running from a local checkout, else None."""
+    """Return the src/ dir if this script is running from a local checkout, else None."""
     try:
-        here = Path(__file__).resolve().parent
-        if all((here / f).exists() for f in SCRIPTS):
-            return here
+        src = Path(__file__).resolve().parent / "src"
+        if all((src / f).exists() for f in SCRIPTS):
+            return src
     except Exception:
         pass
     return None
@@ -595,7 +595,7 @@ def _download_scripts(dest_dir: Path) -> None:
     """Download SCRIPTS from remote into dest_dir (no output)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     for filename in SCRIPTS:
-        url = f"{REMOTE_BASE}/{filename}"
+        url = f"{REMOTE_BASE}/src/{filename}"
         try:
             with urllib.request.urlopen(url) as r:
                 (dest_dir / filename).write_bytes(r.read())
