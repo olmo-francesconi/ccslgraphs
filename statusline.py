@@ -396,12 +396,28 @@ def _build_columns(
             continue
         idx = min(num_cols - 1, int((t - session_start_ms) / duration * num_cols))
         cols[idx] = point["pct"]
-    # Fill columns up to now with 0.0 so early gaps render as baseline
+    # Fill elapsed columns up to now:
+    #   • gap between two known values → linear interpolation
+    #   • leading gap (no left neighbour) → 0.0 (no usage yet)
+    #   • trailing elapsed gap (no right neighbour) → forward-fill
     clamped = max(session_start_ms, min(fill_until_ms, session_end_ms))
     fill_cols = min(num_cols, math.ceil((clamped - session_start_ms) / duration * num_cols))
-    for i in range(fill_cols):
-        if math.isnan(cols[i]):
-            cols[i] = 0.0
+    i = 0
+    while i < fill_cols:
+        if not math.isnan(cols[i]):
+            i += 1
+            continue
+        j = i
+        while j < fill_cols and math.isnan(cols[j]):
+            j += 1
+        left = cols[i - 1] if i > 0 else float("nan")
+        if not math.isnan(left):
+            for k in range(i, j):  # forward-fill from left neighbour
+                cols[k] = left
+        else:
+            for k in range(i, j):  # leading gap: no usage yet
+                cols[k] = 0.0
+        i = j
 
     # Enforce monotonically increasing — usage within a window never goes down;
     # any API dip (e.g. rolling-window jitter) is clamped to the previous high.
