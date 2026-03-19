@@ -1,61 +1,41 @@
-# ccslgraphs
+<div align="center">
 
-A custom statusline for [Claude Code](https://claude.ai/code) that adds a live context bar, git info, and side-by-side usage graphs at the bottom of every session.
+```
+┌─┐┌─┐┌─┐┬  ┌─┐┬─┐┌─┐┌─┐┬ ┬┌─┐
+│  │  └─┐│  │ ┬├┬┘├─┤├─┘├─┤└─┐
+└─┘└─┘└─┘┴─┘└─┘┴└─┴ ┴┴  ┴ ┴└─┘
+```
 
----
+A statusline for Claude Code with a live context bar, git info, and usage graphs.
 
-## What it shows
-
-**Status line** — model name · effort level · context bar with token counts · git branch and dirty state
-
-**Usage graphs** — two side-by-side sparkline graphs that update every 5 minutes:
-- **5h session** — context utilization across the current rate-limit window
-- **7d weekly** — utilization across the rolling 7-day window
-
-Color coding: blue → orange → red as utilization climbs.
-
----
-
-## Requirements
-
-- Python 3.11+
-- macOS (Keychain auth) or `~/.claude/.credentials.json` fallback
-- Claude Code
-
----
+</div>
 
 ## Install
 
 ```sh
-python3 install.py
+curl -fsSL https://raw.githubusercontent.com/olmo-francesconi/ccslgraphs/main/install.py | python3
 ```
 
-Copies `statusline.py` and `usage_fetch.py` into `~/.claude/ccslgraphs/` and patches `~/.claude/settings.json` with the `statusLine` entry. Restart Claude Code to activate.
+Downloads the scripts to `~/.claude/ccslgraphs/` and patches your `settings.json`. Restart Claude Code and it's live.
 
 To uninstall:
 
 ```sh
-python3 uninstall.py
+curl -fsSL https://raw.githubusercontent.com/olmo-francesconi/ccslgraphs/main/uninstall.py | python3
 ```
 
----
+## Example
 
-## How it works
+```
+claude-sonnet-4-6  low  ██████████░░░░░░░░░░  12k/100k  main*
+──────────────────────────────────────────────────────────────────────────
+ 5h session                      │  7d weekly
+ 100% ●                          │  100%
+  75%  │                         │   75%
+  50%  │  ●                      │   50%          ●
+  25%  │  │  ●  ●                │   25%    ●  ●  │  ●
+   0%  ──────────────────        │    0%  ──────────────────
+       23:00  00:00  01:00       │        Mon  Tue  Wed  Thu
+```
 
-`statusline.py` is invoked by Claude Code as the `statusLine` command on every turn. It reads session JSON from stdin and prints the status line + graphs to stdout.
-
-When the usage cache is stale (>5 min), it spawns `usage_fetch.py` detached in the background. A lock file deduplicates fetches so repeated renders do not fan out concurrent workers, and the statusline never blocks waiting for a fetch.
-
-`usage_fetch.py` reads your OAuth token from the macOS Keychain (or `~/.claude/.credentials.json` as a fallback), calls the Anthropic usage API, and writes the result atomically to `~/.claude/ccslgraphs/usage-cache.json`.
-
----
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `statusline.py` | Main statusline script — renders status line + graphs |
-| `usage_fetch.py` | Background fetcher — writes usage-cache.json |
-| `install.py` | Copies scripts to `~/.claude/ccslgraphs/`, patches settings.json |
-| `uninstall.py` | Removes install directory, cleans settings.json |
-| `tests/` | unittest suite |
+Model · effort · context bar · git branch on the top line. Two graphs below — current 5h session and rolling 7-day window, both color-coded blue → orange → red as you climb.

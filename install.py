@@ -10,12 +10,14 @@ import select
 import shutil
 import subprocess
 import sys
+import tempfile
 import termios
 import tty
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent
+REMOTE_BASE = "https://raw.githubusercontent.com/olmo-francesconi/ccslgraphs/main"
 SCRIPTS = ["statusline.py", "usage_fetch.py"]
 
 _M  = "\x1b[35m"  # magenta
@@ -376,7 +378,9 @@ def prompt_confirm(install_dir: Path, use_bar: bool) -> None:
     entry = statusline_entry(install_dir)
     snippet = json.dumps({"statusLine": entry}, indent=2)
 
+    source = "local" if _local_root() is not None else "remote"
     print(f"  Install into:  {install_dir}")
+    print(f"  Source:        {source}")
     print(f"  Graph style:   {style_name}")
     print(f"\n  settings.json preview:")
     for line in snippet.splitlines():
@@ -540,10 +544,7 @@ def bake_gradient(install_dir: Path) -> None:
         flags=re.DOTALL,
     )
     script.write_text(text)
-    r0, g0, b0 = stops[0][1:]
-    r1, g1, b1 = stops[1][1:]
-    r2, g2, b2 = stops[2][1:]
-    print(f"  {_OK}✓{_R} baked gradient  {_D}ok=#{r0:02x}{g0:02x}{b0:02x}  warn=#{r1:02x}{g1:02x}{b1:02x}  crit=#{r2:02x}{g2:02x}{b2:02x}{_R}")
+    print(f"  {_OK}✓{_R} baked gradient")
 
 
 def bake_colors(install_dir: Path) -> None:
@@ -573,14 +574,35 @@ def bake_colors(install_dir: Path) -> None:
     print(f"  {_OK}✓{_R} baked terminal colors")
 
 
-def copy_scripts(install_dir: Path) -> None:
+def _local_root() -> Path | None:
+    """Return the repo root if this script is running from a local checkout, else None."""
+    try:
+        here = Path(__file__).resolve().parent
+        if all((here / f).exists() for f in SCRIPTS):
+            return here
+    except Exception:
+        pass
+    return None
+
+
+def _download_scripts(dest_dir: Path) -> None:
+    """Download SCRIPTS from remote into dest_dir (no output)."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for filename in SCRIPTS:
+        url = f"{REMOTE_BASE}/{filename}"
+        try:
+            with urllib.request.urlopen(url) as r:
+                (dest_dir / filename).write_bytes(r.read())
+        except Exception as e:
+            sys.exit(f"Failed to download {filename}: {e}")
+
+
+def install_scripts(stage_dir: Path, install_dir: Path) -> None:
+    """Copy staged scripts into install_dir and mark executable."""
     install_dir.mkdir(parents=True, exist_ok=True)
     for filename in SCRIPTS:
-        src = ROOT_DIR / filename
-        if not src.exists():
-            sys.exit(f"Missing {src}")
         dest = install_dir / filename
-        shutil.copy2(src, dest)
+        shutil.copy2(stage_dir / filename, dest)
         dest.chmod(0o755)
         print(f"  {_OK}✓{_R} installed {filename}")
 
@@ -636,9 +658,22 @@ def main(argv: list[str] | None = None, _settings_path: Path | None = None) -> N
     else:
         install_dir = prompt_install_dir()
 
+    # Stage scripts for preview without touching install_dir yet
+    local = _local_root()
+    tmp = None
+    if local is not None:
+        stage_dir = local
+    else:
+        print("\x1b[2J\x1b[H", end="", flush=True)
+        print_header()
+        print(f"  {_D}Fetching scripts for preview…{_R}\n")
+        tmp = tempfile.TemporaryDirectory()
+        stage_dir = Path(tmp.name)
+        _download_scripts(stage_dir)
+
     # Load module for preview (best-effort)
     try:
-        mod = _load_statusline_module(ROOT_DIR / "statusline.py")
+        mod = _load_statusline_module(stage_dir / "statusline.py")
     except Exception:
         mod = None
 
@@ -657,7 +692,9 @@ def main(argv: list[str] | None = None, _settings_path: Path | None = None) -> N
     print("\x1b[2J\x1b[H", end="", flush=True)
     print_header()
     print(f"  {_D}Installing…{_R}\n")
-    copy_scripts(install_dir)
+    install_scripts(stage_dir, install_dir)
+    if tmp is not None:
+        tmp.cleanup()
     bake_colors(install_dir)
     bake_gradient(install_dir)
     bake_graph_type(install_dir, bar=use_bar)
