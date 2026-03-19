@@ -1,10 +1,9 @@
-## ccslgraphs
-
 <div align="center">
-**Just another statusline for Claude Code, this one has graphs.**
-</div>
 
----
+# ccslgraphs
+
+Just another statusline for Claude Code, this one has graphs.
+</div>
 
 ![statusline screenshot](screenshots/statusline_full.png)
 ![statusline screenshot](screenshots/statusline_compact.png)
