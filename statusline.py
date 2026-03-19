@@ -18,6 +18,7 @@ STALE_SECONDS = 5 * 60
 FETCH_LOCK_SECONDS = 60
 SAFE_MARGIN = 30
 BAR_WIDTH = 20
+MAX_WIDTH = 128
 
 _GRID_CHAR = "─"
 _GRID_ROWS_SET = {0, 3, 6}
@@ -617,26 +618,30 @@ def render_line(ctx: dict, safe_width: int) -> str:
         in_str = _fmt_tokens(ctx.get("input_tokens") or 0)
         out_str = _fmt_tokens(ctx.get("output_tokens") or 0)
         _io = (
-            Span("  ", C.border + DIM)
-            + Span(in_str, C.label)
+            Span(" · ", C.border)
             + Span("↓", C.bar_ok)
-            + Span(" ")
-            + Span(out_str, C.label)
+            + Span(in_str, C.label)
+            + Span(" / ", C.border)
             + Span("↑", C.bar_warn)
+            + Span(out_str, C.label)
         )
         filled = min(BAR_WIDTH, round(used_int * BAR_WIDTH / 100))
-        bar_full = (
-            Span("[", C.bracket)
-            + Span("█" * filled, bar_color)
-            + Span("░" * (BAR_WIDTH - filled), C.bar_bg)
-            + Span("]", C.bracket)
-            + Span(f" {used_str}/{total_str} ", C.label)
+        _stats_full = (
+            Span("  [", C.bracket)
+            + Span(f"{used_str}/{total_str}", C.label)
+            + Span("] ", C.bracket)
             + Span(f"{used_int}%", bar_color)
             + _io
         )
-        bar_compact = Span(f"{used_str}/{total_str} ", C.label) + Span(f"{used_int}%", bar_color) + _io
+        _stats_compact = Span(f"{used_int}%", bar_color) + _io
+        bar_full = (
+            Span("▰" * filled, bar_color)
+            + Span("▱" * (BAR_WIDTH - filled), C.bar_bg)
+            + _stats_full
+        )
+        bar_compact = _stats_compact
     else:
-        bar_full = Span("[", C.bracket) + Span("░" * BAR_WIDTH, C.bar_bg) + Span("]", C.bracket)
+        bar_full = Span("▱" * BAR_WIDTH, C.bar_bg)
         bar_compact = Span("ctx: ?", C.label)
 
     # Git segment
@@ -674,29 +679,25 @@ def render_line(ctx: dict, safe_width: int) -> str:
 
     sep = Span("  ") + Span("|", C.border) + Span("  ")
 
-    # Adaptive layout: full bar → compact (no bar) → truncate
-    full = model_span + sep + bar_full + sep + git_span
-    if full.width <= safe_width:
-        return full.colored
+    def _sep(total: int) -> Span:
+        l = max(0, (total - 1) // 2)
+        r = max(0, total - 1 - l)
+        return Span(" " * l) + Span("|", C.border) + Span(" " * r)
 
-    # Compact mode: distribute remaining space equally across the two separators
-    content_width = model_span.width + bar_compact.width + git_span.width
-    remaining = safe_width - content_width
-    if remaining >= 2:  # need at least room for two "|" chars
+    def _spread(mid: Span) -> str | None:
+        remaining = safe_width - model_span.width - mid.width - git_span.width
+        if remaining < 2:
+            return None
         per_gap = remaining // 2
         leftover = remaining - per_gap * 2
+        return (model_span + _sep(per_gap + leftover) + mid + _sep(per_gap) + git_span).colored
 
-        def _sep(total: int) -> Span:
-            l = (total - 1) // 2
-            r = total - 1 - l
-            return Span(" " * l) + Span("|", C.border) + Span(" " * r)
-
-        sep1 = _sep(per_gap + leftover)
-        sep2 = _sep(per_gap)
-        compact = model_span + sep1 + bar_compact + sep2 + git_span
-        return compact.colored
-
-    return _truncate_segments([model_span, sep, bar_compact, sep, git_span], safe_width)
+    # Adaptive layout: full bar → compact (no bar) → truncate; always spread to fill safe_width
+    return (
+        _spread(bar_full)
+        or _spread(bar_compact)
+        or _truncate_segments([model_span, sep, bar_compact, sep, git_span], safe_width)
+    )
 
 
 def render_graphs(ctx: dict, safe_width: int) -> list[str]:
@@ -765,7 +766,7 @@ def main() -> None:
     }
 
     tw = _term_width()
-    safe = max(1, tw - SAFE_MARGIN)
+    safe = min(max(1, tw - SAFE_MARGIN), MAX_WIDTH)
     if safe % 2 == 0:  # snap to 2n+3 form so graph width == safe exactly
         safe -= 1
 
