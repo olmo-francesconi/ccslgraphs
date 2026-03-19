@@ -444,15 +444,16 @@ def _render_graph(
                 _set_grid_cell(grid, r, col, "│", graph_color)
 
     if last_data_col >= 0 and not math.isnan(row_for_col[last_data_col]):
-        dot_row = int(row_for_col[last_data_col])
-        label_str = f"{current_pct}%"
-        lx = last_data_col + 1
-        if lx + len(label_str) > num_cols:
-            lx = last_data_col - len(label_str)
-        for i, ch in enumerate(label_str):
-            col = lx + i
-            if 0 <= col < num_cols:
-                grid[dot_row][col] = (ch, dot_color)
+        max_lbl = num_cols - 2
+        header_end_col = len(header_text[:max_lbl]) + 2 if header_text else 0
+        _place_label(
+            grid,
+            dot_row=int(row_for_col[last_data_col]),
+            dot_col=last_data_col,
+            label_str=f"{current_pct}%",
+            color=dot_color,
+            header_end_col=header_end_col,
+        )
 
     _apply_graph_header(grid, header_text)
     return _finalize_graph_grid(grid)
@@ -489,6 +490,42 @@ def _set_grid_cell(
 ) -> None:
     if 0 <= row < GRAPH_ROWS and 0 <= col < len(grid[0]):
         grid[row][col] = (ch, color)
+
+
+def _place_label(
+    grid: list[list[tuple[str, str | None]]],
+    dot_row: int,
+    dot_col: int,
+    label_str: str,
+    color: str,
+    header_end_col: int,
+) -> None:
+    num_cols = len(grid[0])
+    llen = len(label_str)
+    candidates = [
+        (dot_row, dot_col + 1),
+        (dot_row - 1, dot_col - llen // 2),
+        (dot_row + 1, dot_col - llen // 2),
+        (dot_row, dot_col - llen - 1),
+    ]
+    for row, start_col in candidates:
+        if not (0 <= row < GRAPH_ROWS):
+            continue
+        start_col = max(0, start_col)
+        end_col = start_col + llen
+        if end_col > num_cols:
+            start_col = num_cols - llen
+            end_col = num_cols
+        if start_col < 0:
+            continue
+        cols = range(start_col, end_col)
+        if row == 0 and any(c < header_end_col for c in cols):
+            continue
+        if any(c == dot_col for c in cols) and row == dot_row:
+            continue
+        for i, ch in enumerate(label_str):
+            grid[row][start_col + i] = (ch, color)
+        return
 
 
 def _apply_graph_header(grid: list[list[tuple[str, str | None]]], header_text: str) -> None:
