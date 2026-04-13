@@ -904,15 +904,16 @@ def main() -> None:
         _spawn_fetcher()
 
     ctx_w = data.get("context_window") or {}
+    usage = ctx_w.get("current_usage") or {}
     ctx = {
         "cwd": cwd,
         "model": (data.get("model") or {}).get("display_name") or "Unknown Model",
         "effort": _effort_level(),
         "used_pct": ctx_w.get("used_percentage"),
         "ctx_size": ctx_w.get("context_window_size", 0),
-        "input_tokens": ctx_w.get("total_input_tokens"),
-        "output_tokens": ctx_w.get("total_output_tokens"),
-        "cache_read_tokens": ctx_w.get("cache_read_input_tokens"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cache_read_tokens": usage.get("cache_read_input_tokens"),
         "git": _git_info(cwd),
         "usage_cache": cache,
         "usage_stale": stale and cache is not None,
