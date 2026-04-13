@@ -10,7 +10,6 @@ from unittest import mock
 
 import statusline
 import uninstall
-import usage_fetch
 
 
 class GitInfoTests(unittest.TestCase):
@@ -41,50 +40,16 @@ class GitInfoTests(unittest.TestCase):
             self.assertIn("untracked", info["summary"])
 
 
-class FetchLockTests(unittest.TestCase):
-    def test_claim_fetch_lock_deduplicates_and_clears(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            lock_path = Path(tmpdir) / "usage-fetch.lock"
-            with mock.patch.object(statusline, "FETCH_LOCK_PATH", lock_path):
-                token = statusline._claim_fetch_lock()
-
-                self.assertIsNotNone(token)
-                self.assertIsNone(statusline._claim_fetch_lock())
-
-                assert token is not None
-                statusline._clear_fetch_lock(token)
-                self.assertFalse(lock_path.exists())
-
-    def test_claim_fetch_lock_replaces_stale_lock(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            lock_path = Path(tmpdir) / "usage-fetch.lock"
-            stale_payload = {
-                "createdAt": (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat(),
-                "token": "stale-token",
-            }
-            lock_path.write_text(json.dumps(stale_payload))
-
-            with mock.patch.object(statusline, "FETCH_LOCK_PATH", lock_path):
-                token = statusline._claim_fetch_lock()
-
-            self.assertIsNotNone(token)
-            self.assertNotEqual(token, "stale-token")
-
-
-class UsageFetchTests(unittest.TestCase):
+class WriteCacheTests(unittest.TestCase):
     def test_write_cache_replaces_target_without_fixed_temp_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_path = Path(tmpdir) / "usage-cache.json"
-            lock_path = Path(tmpdir) / "usage-fetch.lock"
-            with (
-                mock.patch.object(usage_fetch, "CACHE_PATH", cache_path),
-                mock.patch.object(usage_fetch, "FETCH_LOCK_PATH", lock_path),
-            ):
-                usage_fetch._write_cache({"fetchedAt": "now", "history": []})
+            with mock.patch.object(statusline, "CACHE_PATH", cache_path):
+                statusline._write_cache({"updatedAt": "now", "history": []})
 
                 self.assertEqual(
                     json.loads(cache_path.read_text()),
-                    {"fetchedAt": "now", "history": []},
+                    {"updatedAt": "now", "history": []},
                 )
                 self.assertEqual(list(Path(tmpdir).glob("usage-cache.json.*.tmp")), [])
 

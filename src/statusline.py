@@ -7,15 +7,15 @@ import os
 import re
 import subprocess
 import sys
-import uuid
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 GRAPH_ROWS = 7
-STALE_SECONDS = 5 * 60
-FETCH_LOCK_SECONDS = 60
+HISTORY_INTERVAL_SECONDS = 60       # 5h graph: 1 point/min → max 300 points
+WEEKLY_HISTORY_INTERVAL_SECONDS = 600  # 7d graph: 1 point/10min → max 1008 points
 SAFE_MARGIN = 30
 BAR_WIDTH = 20
 MAX_WIDTH = 128
@@ -58,7 +58,6 @@ def _pct_color(pct: float) -> str:
 
 
 CACHE_PATH = Path(__file__).parent / "usage-cache.json"
-FETCH_LOCK_PATH = Path(__file__).parent / "usage-fetch.lock"
 
 # ─── ANSI helpers ─────────────────────────────────────────────────────────────
 
@@ -167,102 +166,79 @@ def _load_usage_cache() -> dict | None:
         return None
 
 
-def _is_stale(cache: dict | None) -> bool:
-    if not cache or "fetchedAt" not in cache:
-        return True
-    fetched = datetime.fromisoformat(cache["fetchedAt"].replace("Z", "+00:00"))
-    return (datetime.now(timezone.utc) - fetched).total_seconds() > STALE_SECONDS
+def _epoch_to_iso(epoch: float | int | None) -> str | None:
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
 
 
-def _spawn_fetcher() -> None:
-    candidate = Path(__file__).parent / "usage_fetch.py"
-    if candidate.exists():
-        token = _claim_fetch_lock()
-        if not token:
-            return
+def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
+    """Append current rate-limit percentages to history and return updated cache."""
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    now_ms = now.timestamp() * 1000
+
+    five_h = rate_limits.get("five_hour") or {}
+    seven_d = rate_limits.get("seven_day") or {}
+
+    sess_pct = round(five_h.get("used_percentage") or 0)
+    week_pct = round(seven_d.get("used_percentage") or 0)
+
+    history: list[dict] = list(existing.get("history") or []) if existing else []
+    weekly_history: list[dict] = list(existing.get("weeklyHistory") or []) if existing else []
+
+    def _last_age(hist: list[dict]) -> float:
+        if not hist:
+            return float("inf")
+        ts = hist[-1].get("ts")
+        if not ts:
+            return float("inf")
         try:
-            env = os.environ.copy()
-            env["CCSL_FETCH_LOCK_TOKEN"] = token
-            subprocess.Popen(
-                [sys.executable, str(candidate)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
-                env=env,
-            )
-        except Exception:
-            _clear_fetch_lock(token)
+            last = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return (now - last).total_seconds()
+        except ValueError:
+            return float("inf")
 
+    if _last_age(history) >= HISTORY_INTERVAL_SECONDS:
+        history.append({"ts": now_iso, "pct": sess_pct})
+    if _last_age(weekly_history) >= WEEKLY_HISTORY_INTERVAL_SECONDS:
+        weekly_history.append({"ts": now_iso, "pct": week_pct})
 
-def _lock_age_seconds(lock: dict | None) -> float | None:
-    if not lock:
-        return None
-    created_at = lock.get("createdAt")
-    if not isinstance(created_at, str):
-        return None
-    try:
-        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return (datetime.now(timezone.utc) - created).total_seconds()
+    # Trim to relevant windows
+    cutoff_5h_ms = now_ms - 5 * 3600 * 1000
+    cutoff_7d_ms = now_ms - 7 * 24 * 3600 * 1000
 
-
-def _read_fetch_lock() -> dict | None:
-    try:
-        return json.loads(FETCH_LOCK_PATH.read_text())
-    except Exception:
-        return None
-
-
-def _clear_fetch_lock(token: str) -> None:
-    lock = _read_fetch_lock()
-    if lock and lock.get("token") != token:
-        return
-    try:
-        FETCH_LOCK_PATH.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
-
-
-def _claim_fetch_lock() -> str | None:
-    for _ in range(2):
-        token = uuid.uuid4().hex
-        payload = json.dumps(
-            {
-                "createdAt": datetime.now(timezone.utc).isoformat(),
-                "token": token,
-            }
-        )
+    def _ts_ms(ts: str | None) -> float:
+        if not ts:
+            return 0.0
         try:
-            fd = os.open(FETCH_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            age = _lock_age_seconds(_read_fetch_lock())
-            if age is not None and age < FETCH_LOCK_SECONDS:
-                return None
-            try:
-                FETCH_LOCK_PATH.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError:
-                return None
-            continue
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000
+        except ValueError:
+            return 0.0
 
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(payload)
-            return token
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            _clear_fetch_lock(token)
-            return None
-    return None
+    history = [p for p in history if _ts_ms(p.get("ts")) >= cutoff_5h_ms]
+    weekly_history = [p for p in weekly_history if _ts_ms(p.get("ts")) >= cutoff_7d_ms]
+
+    return {
+        "updatedAt": now_iso,
+        "session": {"utilization": sess_pct, "resetsAt": _epoch_to_iso(five_h.get("resets_at"))},
+        "weekly": {"utilization": week_pct, "resetsAt": _epoch_to_iso(seven_d.get("resets_at"))},
+        "history": history,
+        "weeklyHistory": weekly_history,
+    }
+
+
+def _write_cache(cache: dict) -> None:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=CACHE_PATH.parent,
+        prefix=f"{CACHE_PATH.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        tmp_path = tmp.name
+        json.dump(cache, tmp, indent=2)
+    os.replace(tmp_path, CACHE_PATH)
 
 
 def _effort_level() -> str | None:
@@ -898,10 +874,16 @@ def main() -> None:
 
     cwd = (data.get("workspace") or {}).get("current_dir") or data.get("cwd") or os.getcwd()
 
-    cache = _load_usage_cache()
-    stale = _is_stale(cache)
-    if stale:
-        _spawn_fetcher()
+    rate_limits = data.get("rate_limits") or {}
+    if rate_limits:
+        existing = _load_usage_cache()
+        cache = _update_cache(rate_limits, existing)
+        try:
+            _write_cache(cache)
+        except Exception:
+            pass
+    else:
+        cache = _load_usage_cache() or {}
 
     ctx_w = data.get("context_window") or {}
     usage = ctx_w.get("current_usage") or {}
@@ -911,12 +893,12 @@ def main() -> None:
         "effort": _effort_level(),
         "used_pct": ctx_w.get("used_percentage"),
         "ctx_size": ctx_w.get("context_window_size", 0),
-        "input_tokens": usage.get("input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
+        "input_tokens": ctx_w.get("total_input_tokens"),
+        "output_tokens": ctx_w.get("total_output_tokens"),
         "cache_read_tokens": usage.get("cache_read_input_tokens"),
         "git": _git_info(cwd),
         "usage_cache": cache,
-        "usage_stale": stale and cache is not None,
+        "usage_stale": False,
     }
 
     tw = _term_width()
