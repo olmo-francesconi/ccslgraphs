@@ -31,7 +31,7 @@ class InstallTests(unittest.TestCase):
 
     def test_installs_scripts_to_custom_dir(self) -> None:
         self._install()
-        for name in ["statusline.py", "usage_fetch.py"]:
+        for name in ["statusline.py"]:
             f = self.install_dir / name
             self.assertTrue(f.exists(), f"{name} not found")
             self.assertTrue(os.access(f, os.X_OK), f"{name} not executable")

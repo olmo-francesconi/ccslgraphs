@@ -19,7 +19,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 REMOTE_BASE = "https://raw.githubusercontent.com/olmo-francesconi/ccslgraphs/main"
-SCRIPTS = ["statusline.py", "usage_fetch.py"]
+SCRIPTS = ["statusline.py"]
 
 _M  = "\x1b[35m"  # magenta
 _D  = "\x1b[2m"   # dim
@@ -172,7 +172,6 @@ def _build_mock_ctx() -> dict:
         "usage_cache": {
             "session": {"utilization": 55, "resetsAt": sess_reset.isoformat()},
             "weekly": {"utilization": 94, "resetsAt": week_reset.isoformat()},
-            "monthly": {"enabled": False, "usedCents": 0, "limitCents": 0},
             "history": history,
             "weeklyHistory": weekly_history,
         },
