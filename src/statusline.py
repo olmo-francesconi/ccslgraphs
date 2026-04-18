@@ -41,17 +41,34 @@ _GRADIENT_FALLBACK: list[tuple[int, int, int, int]] = [
 def _pct_color(pct: float) -> str:
     """Smooth truecolor gradient: bar_ok (0%) → bar_warn (70%) → bar_crit (90%+)."""
     stops = _GRADIENT_RGB or _GRADIENT_FALLBACK
-    if pct <= stops[0][0]:
+    return _interp_stops(stops, pct)
+
+
+# Projection line: green (far) → yellow (mid) → red (imminent). Distinct from the
+# curve palette so "safe" reads as literal green.
+_PROJECTION_STOPS: list[tuple[int, int, int, int]] = [
+    (0,     0, 200,  80),
+    (50,  240, 200,   0),
+    (100, 230,  40,  40),
+]
+
+
+def _projection_color(danger: float) -> str:
+    return _interp_stops(_PROJECTION_STOPS, danger)
+
+
+def _interp_stops(stops: list[tuple[int, int, int, int]], v: float) -> str:
+    if v <= stops[0][0]:
         _, r, g, b = stops[0]
         return f"\x1b[38;2;{r};{g};{b}m"
-    if pct >= stops[-1][0]:
+    if v >= stops[-1][0]:
         _, r, g, b = stops[-1]
         return f"\x1b[38;2;{r};{g};{b}m"
     for i in range(len(stops) - 1):
         p0, r0, g0, b0 = stops[i]
         p1, r1, g1, b1 = stops[i + 1]
-        if p0 <= pct <= p1:
-            t = (pct - p0) / (p1 - p0)
+        if p0 <= v <= p1:
+            t = (v - p0) / (p1 - p0)
             return f"\x1b[38;2;{round(r0+t*(r1-r0))};{round(g0+t*(g1-g0))};{round(b0+t*(b1-b0))}m"
     _, r, g, b = stops[-1]
     return f"\x1b[38;2;{r};{g};{b}m"
@@ -413,6 +430,8 @@ def _render_line_graph(
     columns: list[float],
     current_pct: int,
     header_text: str = "",
+    col_ms: float = 0.0,
+    reference_ms: float = 0.0,
 ) -> tuple[list[str], list[str]]:
     num_cols = len(columns)
 
@@ -492,6 +511,7 @@ def _render_line_graph(
             header_end_col=header_end_col,
         )
 
+    _draw_projection_line(grid, columns, current_pct, last_data_col, col_ms, reference_ms)
     _apply_graph_header(grid, header_text)
     return _finalize_graph_grid(grid)
 
@@ -590,6 +610,58 @@ def _place_label(
         return
 
 
+def _draw_projection_line(
+    grid: list[list[tuple[str, str | None]]],
+    columns: list[float],
+    current_pct: int,
+    last_data_col: int,
+    col_ms: float,
+    reference_ms: float,
+) -> None:
+    num_cols = len(grid[0])
+    if num_cols < 2 or last_data_col < 1 or col_ms <= 0 or reference_ms <= 0:
+        return
+
+    last_pct = columns[last_data_col]
+    if math.isnan(last_pct):
+        return
+
+    if current_pct >= 100 or last_pct >= 100:
+        target_col = next(
+            (i for i, p in enumerate(columns) if not math.isnan(p) and p >= 100),
+            num_cols - 1,
+        )
+        color = _projection_color(100)
+    else:
+        win = max(2, min(10, last_data_col // 3))
+        anchor = last_data_col - win
+        if anchor < 0 or math.isnan(columns[anchor]):
+            return
+        slope = (last_pct - columns[anchor]) / win
+        if slope <= 0:
+            target_col = num_cols - 1
+            color = _projection_color(0)
+        else:
+            cols_to_100 = (100 - last_pct) / slope
+            c_star = last_data_col + cols_to_100
+            if c_star >= num_cols:
+                target_col = num_cols - 1
+                color = _projection_color(0)
+            else:
+                target_col = int(round(c_star))
+                t_remaining_ms = cols_to_100 * col_ms
+                danger = max(0.0, min(100.0, 100.0 * (1.0 - t_remaining_ms / reference_ms)))
+                color = _projection_color(danger)
+
+    if not (0 <= target_col < num_cols):
+        return
+
+    for r in range(1, GRAPH_ROWS):
+        ch, _ = grid[r][target_col]
+        if ch == " ":
+            grid[r][target_col] = ("│", color)
+
+
 def _apply_graph_header(grid: list[list[tuple[str, str | None]]], header_text: str) -> None:
     if not header_text:
         return
@@ -622,7 +694,11 @@ def _graph_rows(
     if not (isinstance(history, list) and history):
         return _empty_graph(num_cols, header_text)
     cols = _build_columns(history, window_start_ms, window_end_ms, fill_until_ms, num_cols)
-    return _render_bar_graph(cols, header_text) if bar else _render_line_graph(cols, current_pct, header_text)
+    if bar:
+        return _render_bar_graph(cols, header_text)
+    col_ms = (window_end_ms - window_start_ms) / num_cols if num_cols > 0 else 0.0
+    reference_ms = max(0.0, window_end_ms - fill_until_ms)
+    return _render_line_graph(cols, current_pct, header_text, col_ms, reference_ms)
 
 
 def _fmt_12h(ts_ms: float) -> str:
