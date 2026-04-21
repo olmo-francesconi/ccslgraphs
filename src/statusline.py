@@ -193,7 +193,6 @@ def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
     """Append current rate-limit percentages to history and return updated cache."""
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
-    now_ms = now.timestamp() * 1000
 
     five_h = rate_limits.get("five_hour") or {}
     seven_d = rate_limits.get("seven_day") or {}
@@ -201,8 +200,24 @@ def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
     sess_pct = round(five_h.get("used_percentage") or 0)
     week_pct = round(seven_d.get("used_percentage") or 0)
 
-    history: list[dict] = list(existing.get("history") or []) if existing else []
-    weekly_history: list[dict] = list(existing.get("weeklyHistory") or []) if existing else []
+    sess_resets_iso = _epoch_to_iso(five_h.get("resets_at"))
+    week_resets_iso = _epoch_to_iso(seven_d.get("resets_at"))
+
+    prev_sess_resets = ((existing or {}).get("session") or {}).get("resetsAt")
+    prev_week_resets = ((existing or {}).get("weekly") or {}).get("resetsAt")
+
+    # Window rollover: when resetsAt advances, the previous cycle's history no
+    # longer belongs to the new window. Start fresh so old high-water marks
+    # don't bleed into the new graph.
+    if sess_resets_iso and prev_sess_resets and sess_resets_iso != prev_sess_resets:
+        history: list[dict] = []
+    else:
+        history = list(existing.get("history") or []) if existing else []
+
+    if week_resets_iso and prev_week_resets and week_resets_iso != prev_week_resets:
+        weekly_history: list[dict] = []
+    else:
+        weekly_history = list(existing.get("weeklyHistory") or []) if existing else []
 
     def _last_age(hist: list[dict]) -> float:
         if not hist:
@@ -216,14 +231,19 @@ def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
         except ValueError:
             return float("inf")
 
+    # Post-rollover API lag: usage within a window only grows, so any stored
+    # point higher than the current reading is a stale artifact (the rate-limit
+    # endpoint can keep reporting the previous cycle's % for a few minutes
+    # after reset). Drop them anywhere in history so the monotonic clamp in
+    # _build_columns doesn't pin the new cycle to an old peak.
+    LAG_DROP_THRESHOLD = 5
+    history = [p for p in history if (p.get("pct") or 0) <= sess_pct + LAG_DROP_THRESHOLD]
+    weekly_history = [p for p in weekly_history if (p.get("pct") or 0) <= week_pct + LAG_DROP_THRESHOLD]
+
     if _last_age(history) >= HISTORY_INTERVAL_SECONDS:
         history.append({"ts": now_iso, "pct": sess_pct})
     if _last_age(weekly_history) >= WEEKLY_HISTORY_INTERVAL_SECONDS:
         weekly_history.append({"ts": now_iso, "pct": week_pct})
-
-    # Trim to relevant windows
-    cutoff_5h_ms = now_ms - 5 * 3600 * 1000
-    cutoff_7d_ms = now_ms - 7 * 24 * 3600 * 1000
 
     def _ts_ms(ts: str | None) -> float:
         if not ts:
@@ -233,13 +253,29 @@ def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
         except ValueError:
             return 0.0
 
+    def _iso_ms(iso: str | None) -> float | None:
+        if not iso:
+            return None
+        try:
+            return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000
+        except ValueError:
+            return None
+
+    # Trim relative to the window's real start (resetsAt − duration), not wall
+    # clock. This drops previous-cycle points cleanly on rollover.
+    now_ms = now.timestamp() * 1000
+    sess_end_ms = _iso_ms(sess_resets_iso)
+    week_end_ms = _iso_ms(week_resets_iso)
+    cutoff_5h_ms = (sess_end_ms - 5 * 3600 * 1000) if sess_end_ms else (now_ms - 5 * 3600 * 1000)
+    cutoff_7d_ms = (week_end_ms - 7 * 24 * 3600 * 1000) if week_end_ms else (now_ms - 7 * 24 * 3600 * 1000)
+
     history = [p for p in history if _ts_ms(p.get("ts")) >= cutoff_5h_ms]
     weekly_history = [p for p in weekly_history if _ts_ms(p.get("ts")) >= cutoff_7d_ms]
 
     return {
         "updatedAt": now_iso,
-        "session": {"utilization": sess_pct, "resetsAt": _epoch_to_iso(five_h.get("resets_at"))},
-        "weekly": {"utilization": week_pct, "resetsAt": _epoch_to_iso(seven_d.get("resets_at"))},
+        "session": {"utilization": sess_pct, "resetsAt": sess_resets_iso},
+        "weekly": {"utilization": week_pct, "resetsAt": week_resets_iso},
         "history": history,
         "weeklyHistory": weekly_history,
     }
