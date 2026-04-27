@@ -206,15 +206,32 @@ def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
     prev_sess_resets = ((existing or {}).get("session") or {}).get("resetsAt")
     prev_week_resets = ((existing or {}).get("weekly") or {}).get("resetsAt")
 
-    # Window rollover: when resetsAt advances, the previous cycle's history no
-    # longer belongs to the new window. Start fresh so old high-water marks
-    # don't bleed into the new graph.
-    if sess_resets_iso and prev_sess_resets and sess_resets_iso != prev_sess_resets:
+    now_ms = now.timestamp() * 1000
+
+    def _iso_to_ms(iso: str | None) -> float | None:
+        if not iso:
+            return None
+        try:
+            return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000
+        except ValueError:
+            return None
+
+    # Window rollover: start fresh when either the API reports a new resetsAt,
+    # or our clock is already past the previously-stored resetsAt. The clock
+    # check catches the case where the API drops the block or lags in advancing
+    # resetsAt after the window ends — otherwise stale history bleeds through.
+    def _rolled_over(new_iso: str | None, prev_iso: str | None) -> bool:
+        if new_iso and prev_iso and new_iso != prev_iso:
+            return True
+        prev_ms = _iso_to_ms(prev_iso)
+        return prev_ms is not None and now_ms >= prev_ms
+
+    if _rolled_over(sess_resets_iso, prev_sess_resets):
         history: list[dict] = []
     else:
         history = list(existing.get("history") or []) if existing else []
 
-    if week_resets_iso and prev_week_resets and week_resets_iso != prev_week_resets:
+    if _rolled_over(week_resets_iso, prev_week_resets):
         weekly_history: list[dict] = []
     else:
         weekly_history = list(existing.get("weeklyHistory") or []) if existing else []
@@ -253,19 +270,10 @@ def _update_cache(rate_limits: dict, existing: dict | None) -> dict:
         except ValueError:
             return 0.0
 
-    def _iso_ms(iso: str | None) -> float | None:
-        if not iso:
-            return None
-        try:
-            return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000
-        except ValueError:
-            return None
-
     # Trim relative to the window's real start (resetsAt − duration), not wall
     # clock. This drops previous-cycle points cleanly on rollover.
-    now_ms = now.timestamp() * 1000
-    sess_end_ms = _iso_ms(sess_resets_iso)
-    week_end_ms = _iso_ms(week_resets_iso)
+    sess_end_ms = _iso_to_ms(sess_resets_iso)
+    week_end_ms = _iso_to_ms(week_resets_iso)
     cutoff_5h_ms = (sess_end_ms - 5 * 3600 * 1000) if sess_end_ms else (now_ms - 5 * 3600 * 1000)
     cutoff_7d_ms = (week_end_ms - 7 * 24 * 3600 * 1000) if week_end_ms else (now_ms - 7 * 24 * 3600 * 1000)
 
