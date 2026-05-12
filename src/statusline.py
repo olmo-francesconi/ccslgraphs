@@ -146,6 +146,12 @@ def _term_width() -> int:
             os.close(fd)
     except OSError:
         pass
+    # Claude Code spawns the statusline without a controlling tty, so /dev/tty
+    # fails with ENXIO. Walk up the process tree and read the size of the
+    # first parent's tty — that's the real terminal Claude is rendering into.
+    w = _parent_tty_width()
+    if w > 0:
+        return w
     try:
         result = subprocess.run(
             ["tput", "cols"],
@@ -166,6 +172,36 @@ def _term_width() -> int:
     except ValueError:
         pass
     return 80
+
+
+def _parent_tty_width() -> int:
+    pid = os.getpid()
+    for _ in range(6):
+        try:
+            r = subprocess.run(
+                ["ps", "-o", "ppid=,tty=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=1,
+            )
+            parts = r.stdout.split()
+            if len(parts) < 2:
+                return 0
+            ppid, tty = parts[0], parts[1]
+            if tty and tty != "??":
+                dev = tty if tty.startswith("/") else f"/dev/{tty}"
+                try:
+                    fd = os.open(dev, os.O_RDONLY | os.O_NOCTTY)
+                    try:
+                        return os.get_terminal_size(fd).columns
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    return 0
+            pid = int(ppid)
+            if pid <= 1:
+                return 0
+        except Exception:
+            return 0
+    return 0
 
 
 def _load_input() -> dict:
